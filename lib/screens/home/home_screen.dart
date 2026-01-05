@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../auth/auth_notifier.dart';
+import '../../data/family_connection_repository.dart';
 import '../../data/user_profile_repository.dart';
+import '../../models/family_member_status.dart';
 import '../../root_gate.dart';
 import '../../services/role_mode_storage.dart';
 import '../../features/medicines/add_medicine_screen.dart';
@@ -20,20 +22,32 @@ class HomeScreen extends StatelessWidget {
   final String role;
   final String? name;
   final Map<String, bool> roles;
+  final FamilyMemberStatus familyMemberStatus;
 
   const HomeScreen({
     super.key,
     required this.role,
     this.name,
     required this.roles,
+    this.familyMemberStatus = FamilyMemberStatus.none,
   });
 
   @override
   Widget build(BuildContext context) {
     if (role == UserProfileRepository.roleFamilyMember) {
-      return _FamilyHomeScreen(role: role, name: name, roles: roles);
+      return _FamilyHomeScreen(
+        role: role,
+        name: name,
+        roles: roles,
+        familyMemberStatus: familyMemberStatus,
+      );
     }
-    return _PatientHomeScreen(role: role, name: name, roles: roles);
+    return _PatientHomeScreen(
+      role: role,
+      name: name,
+      roles: roles,
+      familyMemberStatus: familyMemberStatus,
+    );
   }
 }
 
@@ -57,6 +71,7 @@ Future<void> _switchRole(
 List<PopupMenuEntry<String>> _buildRoleMenuItems(
   BuildContext context,
   Map<String, bool> roles,
+  FamilyMemberStatus familyStatus,
 ) {
   final items = <PopupMenuEntry<String>>[];
   if (roles[UserProfileRepository.rolePatient] == true) {
@@ -68,10 +83,16 @@ List<PopupMenuEntry<String>> _buildRoleMenuItems(
     );
   }
   if (roles[UserProfileRepository.roleFamilyMember] == true) {
+    final isPending = familyStatus == FamilyMemberStatus.pending;
     items.add(
       PopupMenuItem(
         value: UserProfileRepository.roleFamilyMember,
-        child: Text(context.loc.t('familyMemberMode')),
+        enabled: !isPending,
+        child: Text(
+          isPending
+              ? context.loc.t('familyMemberPending')
+              : context.loc.t('familyMemberMode'),
+        ),
       ),
     );
   }
@@ -133,12 +154,14 @@ class _HomeAppBarTitle extends StatelessWidget {
   final String role;
   final Map<String, bool> roles;
   final String uid;
+  final FamilyMemberStatus familyMemberStatus;
 
   const _HomeAppBarTitle({
     required this.name,
     required this.role,
     required this.roles,
     required this.uid,
+    required this.familyMemberStatus,
   });
 
   @override
@@ -227,7 +250,9 @@ class _HomeAppBarTitle extends StatelessWidget {
   ) {
     final base = role == UserProfileRepository.rolePatient
         ? context.loc.t('patient')
-        : context.loc.t('family');
+        : (familyMemberStatus == FamilyMemberStatus.pending
+            ? context.loc.t('familyMemberPending')
+            : context.loc.t('family'));
     if (role == UserProfileRepository.rolePatient &&
         publicId != null &&
         publicId.isNotEmpty) {
@@ -274,7 +299,8 @@ class _HomeAppBarTitle extends StatelessWidget {
     return PopupMenuButton<String>(
       tooltip: context.loc.t('switchRole'),
       onSelected: (value) => _switchRole(context, uid, role, value),
-      itemBuilder: (context) => _buildRoleMenuItems(context, roles),
+      itemBuilder: (context) =>
+          _buildRoleMenuItems(context, roles, familyMemberStatus),
       child: chip,
     );
   }
@@ -364,6 +390,7 @@ class _PendingRequestsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final connectionRepo = FamilyConnectionRepository();
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -395,6 +422,7 @@ class _PendingRequestsSheet extends StatelessWidget {
                     const SizedBox(height: 8),
                     _PendingConnectionList(
                       profileRepo: profileRepo,
+                      connectionRepo: connectionRepo,
                       patientUid: patientUid,
                     ),
                     const SizedBox(height: 20),
@@ -423,10 +451,12 @@ class _PendingRequestsSheet extends StatelessWidget {
 
 class _PendingConnectionList extends StatelessWidget {
   final UserProfileRepository profileRepo;
+  final FamilyConnectionRepository connectionRepo;
   final String patientUid;
 
   const _PendingConnectionList({
     required this.profileRepo,
+    required this.connectionRepo,
     required this.patientUid,
   });
 
@@ -460,6 +490,7 @@ class _PendingConnectionList extends StatelessWidget {
             final data = doc.data();
             return _ConnectionRequestTile(
               profileRepo: profileRepo,
+              connectionRepo: connectionRepo,
               connectionId: doc.id,
               familyMemberUid: data['familyMemberUid'] as String? ?? '',
               relation: data['relation'] as String?,
@@ -523,12 +554,14 @@ class _PendingMedicineRequestList extends StatelessWidget {
 
 class _ConnectionRequestTile extends StatelessWidget {
   final UserProfileRepository profileRepo;
+  final FamilyConnectionRepository connectionRepo;
   final String connectionId;
   final String familyMemberUid;
   final String? relation;
 
   const _ConnectionRequestTile({
     required this.profileRepo,
+    required this.connectionRepo,
     required this.connectionId,
     required this.familyMemberUid,
     required this.relation,
@@ -554,17 +587,17 @@ class _ConnectionRequestTile extends StatelessWidget {
               TextButton(
                 onPressed: () async {
                   try {
-                    await profileRepo.approveConnection(connectionId);
+                    await connectionRepo.acceptConnection(connectionId);
+                    if (!context.mounted) return;
+                  } catch (e, stackTrace) {
+                    debugPrint('Failed to accept connection: $e');
+                    debugPrint(stackTrace.toString());
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(context.loc.t('connectionApproved')),
+                        content:
+                            Text(context.loc.t('failedAcceptConnection')),
                       ),
-                    );
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(context.loc.t('failedSave'))),
                     );
                   }
                 },
@@ -573,17 +606,23 @@ class _ConnectionRequestTile extends StatelessWidget {
               TextButton(
                 onPressed: () async {
                   try {
-                    await profileRepo.rejectConnection(connectionId);
+                    await connectionRepo.rejectConnection(connectionId);
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(context.loc.t('connectionRejected')),
                       ),
                     );
-                  } catch (e) {
+                  } catch (e, stackTrace) {
+                    debugPrint('Failed to reject connection: $e');
+                    debugPrint(stackTrace.toString());
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(context.loc.t('failedSave'))),
+                      SnackBar(
+                        content: Text(
+                          context.loc.t('failedUpdateFamilyConnection'),
+                        ),
+                      ),
                     );
                   }
                 },
@@ -699,11 +738,13 @@ class _PatientHomeScreen extends StatelessWidget {
   final String role;
   final String? name;
   final Map<String, bool> roles;
+  final FamilyMemberStatus familyMemberStatus;
 
   const _PatientHomeScreen({
     required this.role,
     this.name,
     required this.roles,
+    required this.familyMemberStatus,
   });
 
   @override
@@ -732,6 +773,7 @@ class _PatientHomeScreen extends StatelessWidget {
             role: role,
             roles: roles,
             uid: uid,
+            familyMemberStatus: familyMemberStatus,
           ),
           actions: [
             _PendingRequestsAction(
@@ -799,11 +841,13 @@ class _FamilyHomeScreen extends StatefulWidget {
   final String role;
   final String? name;
   final Map<String, bool> roles;
+  final FamilyMemberStatus familyMemberStatus;
 
   const _FamilyHomeScreen({
     required this.role,
     this.name,
     required this.roles,
+    required this.familyMemberStatus,
   });
 
   @override
@@ -811,38 +855,6 @@ class _FamilyHomeScreen extends StatefulWidget {
 }
 
 class _FamilyHomeScreenState extends State<_FamilyHomeScreen> {
-  bool _addingRole = false;
-
-  Future<void> _addPatientRole() async {
-    if (_addingRole) return;
-    setState(() => _addingRole = true);
-    try {
-      await context.read<AuthNotifier>().addUserRole(
-            UserProfileRepository.rolePatient,
-          );
-      final user = context.read<AuthNotifier>().user;
-      if (user != null) {
-        await RoleModeStorage.setSelectedRole(
-          user.uid,
-          UserProfileRepository.roleFamilyMember,
-        );
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.loc.t('patientRoleAdded'))),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.loc.t('failedSave'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _addingRole = false);
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthNotifier>();
@@ -854,8 +866,6 @@ class _FamilyHomeScreenState extends State<_FamilyHomeScreen> {
     }
 
     final profileRepo = UserProfileRepository();
-    final canAddPatient =
-        widget.roles[UserProfileRepository.rolePatient] != true;
 
     return Scaffold(
       appBar: AppBar(
@@ -868,6 +878,7 @@ class _FamilyHomeScreenState extends State<_FamilyHomeScreen> {
           role: widget.role,
           roles: widget.roles,
           uid: user.uid,
+          familyMemberStatus: widget.familyMemberStatus,
         ),
         actions: [
           IconButton(
@@ -904,24 +915,10 @@ class _FamilyHomeScreenState extends State<_FamilyHomeScreen> {
               context.loc.t('connectedPatients'),
               style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
-            if (canAddPatient) ...[
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: _addingRole ? null : _addPatientRole,
-                icon: _addingRole
-                    ? const SizedBox(
-                        height: 18,
-                        width: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.medication_outlined),
-                label: Text(context.loc.t('alsoTakeMedicines')),
-              ),
-            ],
             const SizedBox(height: 12),
             Expanded(
               child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: profileRepo.watchApprovedConnectionsForFamily(user.uid),
+                stream: profileRepo.watchConnectionsForFamily(user.uid),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
@@ -937,11 +934,34 @@ class _FamilyHomeScreenState extends State<_FamilyHomeScreen> {
                     );
                   }
 
+                  final approvedDocs = docs
+                      .where(
+                        (doc) => doc.data()['status'] == 'approved',
+                      )
+                      .toList();
+                  final pendingDocs = docs
+                      .where(
+                        (doc) => doc.data()['status'] == 'pending',
+                      )
+                      .toList();
+
+                  if (approvedDocs.isEmpty && pendingDocs.isNotEmpty) {
+                    return _PendingFamilyMemberSection(
+                      pendingConnections: pendingDocs,
+                    );
+                  }
+
+                  if (approvedDocs.isEmpty) {
+                    return Center(
+                      child: Text(context.loc.t('noApprovedConnections')),
+                    );
+                  }
+
                   return ListView.separated(
-                    itemCount: docs.length,
+                    itemCount: approvedDocs.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
-                      final doc = docs[index];
+                      final doc = approvedDocs[index];
                       final data = doc.data();
                       return _ApprovedConnectionTile(
                         profileRepo: profileRepo,
@@ -1048,6 +1068,80 @@ class _ApprovedConnectionTile extends StatelessWidget {
                 _PatientTodayMedicines(patientUid: patientUid),
               ],
             ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PendingFamilyMemberSection extends StatelessWidget {
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> pendingConnections;
+
+  const _PendingFamilyMemberSection({
+    required this.pendingConnections,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      itemCount: pendingConnections.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        return _PendingConnectionTile(
+          connection: pendingConnections[index],
+        );
+      },
+    );
+  }
+}
+
+class _PendingConnectionTile extends StatelessWidget {
+  final QueryDocumentSnapshot<Map<String, dynamic>> connection;
+
+  const _PendingConnectionTile({
+    required this.connection,
+  });
+
+  Future<String?> _loadPublicId(Map<String, dynamic> data) async {
+    final patientUid = data['patientUid'] as String? ?? '';
+    final existing = data['patientPublicId'] as String?;
+    if (existing != null && existing.isNotEmpty) {
+      return existing;
+    }
+    if (patientUid.isEmpty) return null;
+    final patientDoc = await FirebaseFirestore.instance
+        .collection('patients')
+        .doc(patientUid)
+        .get();
+    return patientDoc.data()?['publicId'] as String?;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = connection.data();
+    final relation = data['relation'] as String?;
+
+    return FutureBuilder<String?>(
+      future: _loadPublicId(data),
+      builder: (context, snapshot) {
+        final publicId = snapshot.data;
+        final message = publicId != null && publicId.isNotEmpty
+            ? context.loc.t(
+                'pendingApprovalFrom',
+                params: {'id': publicId},
+              )
+            : context.loc.t('pendingApproval');
+
+        return Card(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: ListTile(
+            leading: const Icon(Icons.hourglass_empty, color: Colors.orange),
+            title: Text(message),
+            subtitle: relation != null && relation.isNotEmpty
+                ? Text(_relationLabel(context, relation))
+                : null,
           ),
         );
       },

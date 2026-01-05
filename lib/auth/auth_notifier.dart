@@ -223,24 +223,64 @@ class AuthNotifier extends ChangeNotifier {
   }
 
   /// Updates user role in Firestore.
-  Future<void> updateUserRole(String role) async {
+  /// Returns true on success, false on failure.
+  Future<bool> updateUserRole(String role) async {
     final user = _auth.currentUser;
     if (user == null) {
-      throw Exception('User not logged in');
+      _lastErrorMessage = 'User not logged in';
+      return false;
     }
     _user = user;
-    await _profileRepo.ensureProfileExists(
-      uid: user.uid,
-      email: user.email ?? '',
-      name: user.displayName ?? '',
-    );
-    await _profileRepo.updateUserRole(user.uid, role);
+    try {
+      await _profileRepo.updateUserRole(
+        user.uid,
+        role,
+        email: user.email,
+        displayName: user.displayName,
+      );
+      _lastErrorMessage = null;
+      return true;
+    } catch (e, stackTrace) {
+      debugPrint('updateUserRole error: $e');
+      debugPrint(stackTrace.toString());
+      _lastErrorMessage = e.toString();
+      return false;
+    }
+  }
+
+  /// Ensures the current user's profile document exists.
+  /// Returns true on success, false on failure.
+  Future<bool> ensureProfileExistsForCurrentUser() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      _lastErrorMessage = 'User not logged in';
+      return false;
+    }
+    try {
+      await _profileRepo.ensureProfileExists(
+        uid: user.uid,
+        email: user.email ?? '',
+        name: user.displayName ?? '',
+      );
+      _lastErrorMessage = null;
+      return true;
+    } catch (e, stackTrace) {
+      debugPrint('ensureProfileExists error: $e');
+      debugPrint(stackTrace.toString());
+      _lastErrorMessage = e.toString();
+      return false;
+    }
   }
 
   /// Adds a role to the current user without removing existing roles.
   Future<void> addUserRole(String roleKey) async {
     if (_user == null) return;
-    await _profileRepo.addUserRole(_user!.uid, roleKey);
+    await _profileRepo.addUserRole(
+      _user!.uid,
+      roleKey,
+      email: _user!.email,
+      displayName: _user!.displayName,
+    );
   }
 
   /// Checks if the current user has a role.

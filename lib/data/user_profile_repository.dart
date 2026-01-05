@@ -70,19 +70,72 @@ class UserProfileRepository {
     String? name,
   }) async {
     try {
-      final doc = await _firestore.collection(_usersCollection).doc(uid).get();
+      final docRef = _firestore.collection(_usersCollection).doc(uid);
+      final doc = await docRef.get();
+      final trimmedEmail = email.trim();
+      final trimmedName = name?.trim();
+      final hasName = trimmedName != null && trimmedName.isNotEmpty;
+      final hasEmail = trimmedEmail.isNotEmpty;
       if (!doc.exists) {
-        await _firestore.collection(_usersCollection).doc(uid).set({
-          'name': name ?? '',
-          'email': email,
-          'role': '',
+        final initialData = <String, Object?>{
+          if (hasName) 'name': trimmedName,
+          if (hasName) 'displayName': trimmedName,
+          if (hasEmail) 'email': trimmedEmail,
           'roles': {
             rolePatient: false,
             roleFamilyMember: false,
           },
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
-        });
+        };
+        await docRef.set(initialData, SetOptions(merge: true));
+        return;
+      }
+
+      final data = doc.data();
+      final rolesMap = _readRolesMap(data);
+      var needsRoleInit = data?['roles'] is! Map;
+      if (!rolesMap.containsKey(rolePatient)) {
+        rolesMap[rolePatient] = false;
+        needsRoleInit = true;
+      }
+      if (!rolesMap.containsKey(roleFamilyMember)) {
+        rolesMap[roleFamilyMember] = false;
+        needsRoleInit = true;
+      }
+
+      final updates = <String, Object?>{};
+      if (needsRoleInit) {
+        updates['roles'] = rolesMap.isEmpty
+            ? {
+                rolePatient: false,
+                roleFamilyMember: false,
+              }
+            : rolesMap;
+      }
+
+      if (hasName) {
+        final existingName = data?['name'] as String?;
+        if (existingName == null || existingName.trim().isEmpty) {
+          updates['name'] = trimmedName;
+        }
+
+        final existingDisplayName = data?['displayName'] as String?;
+        if (existingDisplayName == null || existingDisplayName.trim().isEmpty) {
+          updates['displayName'] = trimmedName;
+        }
+      }
+
+      if (hasEmail) {
+        final existingEmail = data?['email'] as String?;
+        if (existingEmail == null || existingEmail.trim().isEmpty) {
+          updates['email'] = trimmedEmail;
+        }
+      }
+
+      if (updates.isNotEmpty) {
+        updates['updatedAt'] = FieldValue.serverTimestamp();
+        await docRef.set(updates, SetOptions(merge: true));
       }
     } catch (e) {
       debugPrint('Error ensuring profile exists: $e');
@@ -91,14 +144,26 @@ class UserProfileRepository {
   }
 
   /// Updates the user's role (patient or family).
-  Future<void> updateUserRole(String uid, String role) async {
+  Future<void> updateUserRole(
+    String uid,
+    String role, {
+    String? email,
+    String? displayName,
+  }) async {
     try {
       final normalizedRole = _normalizeRoleKey(role);
-      if (normalizedRole == null) return;
-      await _upsertRoles(
+      if (normalizedRole == null) {
+        throw ArgumentError('Unknown role: $role');
+      }
+      await ensureProfileExists(
         uid: uid,
-        addRole: normalizedRole,
+        email: email ?? '',
+        name: displayName,
       );
+      await _firestore.collection(_usersCollection).doc(uid).update({
+        'roles.$normalizedRole': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
       if (normalizedRole == rolePatient) {
         await ensurePatientPublicId(uid);
       }
@@ -109,8 +174,13 @@ class UserProfileRepository {
   }
 
   /// Alias for updateUserRole for consistency with requirements.
-  Future<void> updateRole(String uid, String role) async {
-    return updateUserRole(uid, role);
+  Future<void> updateRole(
+    String uid,
+    String role, {
+    String? email,
+    String? displayName,
+  }) async {
+    return updateUserRole(uid, role, email: email, displayName: displayName);
   }
 
   Future<bool> userHasRole(String uid, String roleKey) async {
@@ -118,16 +188,49 @@ class UserProfileRepository {
     return profileHasRole(profile, roleKey);
   }
 
-  Future<void> addUserRole(String uid, String roleKey) async {
+  Future<void> addUserRole(
+    String uid,
+    String roleKey, {
+    String? email,
+    String? displayName,
+  }) async {
     try {
       final normalizedRole = _normalizeRoleKey(roleKey);
-      if (normalizedRole == null) return;
-      await _upsertRoles(uid: uid, addRole: normalizedRole);
+      if (normalizedRole == null) {
+        throw ArgumentError('Unknown role: $roleKey');
+      }
+      await ensureProfileExists(
+        uid: uid,
+        email: email ?? '',
+        name: displayName,
+      );
+      await _firestore.collection(_usersCollection).doc(uid).update({
+        'roles.$normalizedRole': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
       if (normalizedRole == rolePatient) {
         await ensurePatientPublicId(uid);
       }
     } catch (e) {
       debugPrint('Error adding user role: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> setUserRoleState(
+    String uid,
+    String roleKey,
+    bool enabled,
+  ) async {
+    try {
+      final normalizedRole = _normalizeRoleKey(roleKey);
+      if (normalizedRole == null) return;
+      await _firestore.collection(_usersCollection).doc(uid).update({
+        'roles.$normalizedRole': enabled,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('Error setting user role state: $e');
       rethrow;
     }
   }
@@ -223,11 +326,15 @@ class UserProfileRepository {
     required String familyMemberUid,
     required String patientUid,
     required String relation,
+    String? patientPublicId,
   }) async {
     final docId = _connectionId(familyMemberUid, patientUid);
     await _firestore.collection(_connectionsCollection).doc(docId).set({
       'familyMemberUid': familyMemberUid,
+      'familyUid': familyMemberUid,
       'patientUid': patientUid,
+      if (patientPublicId != null && patientPublicId.isNotEmpty)
+        'patientPublicId': patientPublicId,
       'relation': relation,
       'status': 'pending',
       'createdAt': FieldValue.serverTimestamp(),
@@ -320,6 +427,25 @@ class UserProfileRepository {
         .where('familyMemberUid', isEqualTo: familyMemberUid)
         .where('status', isEqualTo: 'approved')
         .snapshots();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> watchConnectionsForFamily(
+    String familyMemberUid,
+  ) {
+    return _firestore
+        .collection(_connectionsCollection)
+        .where('familyMemberUid', isEqualTo: familyMemberUid)
+        .snapshots();
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> getConnectionsForFamily(
+    String familyMemberUid,
+  ) async {
+    final snapshot = await _firestore
+        .collection(_connectionsCollection)
+        .where('familyMemberUid', isEqualTo: familyMemberUid)
+        .get();
+    return snapshot.docs;
   }
 
   Future<void> approveConnection(String connectionId) async {
@@ -455,6 +581,10 @@ class UserProfileRepository {
   }
 
   Future<void> rejectConnection(String connectionId) async {
+    await _firestore.collection(_connectionsCollection).doc(connectionId).delete();
+  }
+
+  Future<void> cancelConnectionRequest(String connectionId) async {
     await _firestore.collection(_connectionsCollection).doc(connectionId).delete();
   }
 

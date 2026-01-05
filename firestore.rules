@@ -27,6 +27,19 @@ service cloud.firestore {
           oldRoles.family_member != true &&
           newRoles.diff(oldRoles).changedKeys().hasOnly(['family_member']);
     }
+    function canUpdateFamilyConnection(familyUid) {
+      let oldRoles = resource.data.roles is map ? resource.data.roles : {};
+      let newRoles = request.resource.data.roles is map ? request.resource.data.roles : {};
+      let changedKeys = request.resource.data.diff(resource.data).changedKeys();
+      let rolesOk = !changedKeys.hasAny(['roles']) ||
+          (newRoles.family_member == true &&
+           newRoles.diff(oldRoles).changedKeys().hasOnly(['family_member']));
+      return request.auth != null &&
+          request.auth.uid != familyUid &&
+          hasConnectionForPatient(request.auth.uid, familyUid) &&
+          changedKeys.hasOnly(['familyMember', 'roles', 'updatedAt']) &&
+          rolesOk;
+    }
 
     match /users/{uid} {
       // Allow authenticated users to read/write their own profile
@@ -36,7 +49,9 @@ service cloud.firestore {
            hasConnectionForPatient(request.auth.uid, uid));
       allow create, delete: if request.auth != null && request.auth.uid == uid;
       allow update: if request.auth != null &&
-          (request.auth.uid == uid || canGrantFamilyRole(uid));
+          (request.auth.uid == uid ||
+           canGrantFamilyRole(uid) ||
+           canUpdateFamilyConnection(uid));
     }
     match /users/{uid}/medicines/{medicineId} {
       allow read: if request.auth != null &&
@@ -54,6 +69,12 @@ service cloud.firestore {
           request.auth.uid == uid &&
           request.resource.data.publicId == resource.data.publicId;
       allow delete, list: if false;
+    }
+    match /patients/{uid}/familyMembers/{familyMemberUid} {
+      allow read: if request.auth != null &&
+          (request.auth.uid == uid || request.auth.uid == familyMemberUid);
+      allow create, update, delete: if request.auth != null &&
+          request.auth.uid == uid;
     }
     match /patientPublicIds/{publicId} {
       allow get: if request.auth != null;
@@ -80,7 +101,9 @@ service cloud.firestore {
           request.resource.data.patientUid == resource.data.patientUid &&
           request.resource.data.relation == resource.data.relation;
       allow delete: if request.auth != null &&
-          request.auth.uid == resource.data.patientUid;
+          (request.auth.uid == resource.data.patientUid ||
+           (request.auth.uid == resource.data.familyMemberUid &&
+            resource.data.status == 'pending'));
     }
     match /medicineRequests/{requestId} {
       allow get: if request.auth != null &&

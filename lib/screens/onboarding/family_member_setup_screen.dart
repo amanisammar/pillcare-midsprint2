@@ -1,9 +1,11 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
+import '../../auth/auth_notifier.dart';
 import '../../data/user_profile_repository.dart';
 import '../../l10n/app_localizations.dart';
+import '../../patient_code_input_formatter.dart';
 import '../../root_gate.dart';
 
 class FamilyMemberSetupScreen extends StatefulWidget {
@@ -65,11 +67,15 @@ class _FamilyMemberSetupScreenState extends State<FamilyMemberSetupScreen> {
     });
   }
 
+  String _digitsOnly(String value) {
+    return value.replaceAll(RegExp(r'\D'), '');
+  }
+
   List<String> _collectPatients() {
     final unique = <String>[];
     final seen = <String>{};
     for (final controller in _patientControllers) {
-      final digits = controller.text.trim();
+      final digits = _digitsOnly(controller.text);
       if (digits.isEmpty) continue;
       final value = 'P-$digits';
       if (seen.add(value)) {
@@ -81,7 +87,7 @@ class _FamilyMemberSetupScreenState extends State<FamilyMemberSetupScreen> {
 
   bool get _hasValidPatientInputs {
     final entries = _patientControllers
-        .map((controller) => controller.text.trim())
+        .map((controller) => _digitsOnly(controller.text))
         .where((value) => value.isNotEmpty)
         .toList();
     if (entries.isEmpty) return false;
@@ -98,7 +104,9 @@ class _FamilyMemberSetupScreenState extends State<FamilyMemberSetupScreen> {
     final loc = context.loc;
 
     if (patients.isEmpty) {
-      _goToHome();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(loc.t('addPatientIdRequired'))),
+      );
       return;
     }
 
@@ -125,7 +133,7 @@ class _FamilyMemberSetupScreenState extends State<FamilyMemberSetupScreen> {
         throw _ValidationError(loc.t('pleaseSignIn'));
       }
 
-      final patientUids = <String>[];
+      final patientPairs = <({String uid, String publicId})>[];
       for (final patientId in patients) {
         final patientUid =
             await _profileRepo.findPatientUidByPublicId(patientId);
@@ -139,14 +147,15 @@ class _FamilyMemberSetupScreenState extends State<FamilyMemberSetupScreen> {
         if (alreadyConnected) {
           throw _ValidationError(loc.t('alreadyConnected'));
         }
-        patientUids.add(patientUid);
+        patientPairs.add((uid: patientUid, publicId: patientId));
       }
 
-      for (final patientUid in patientUids) {
+      for (final pair in patientPairs) {
         await _profileRepo.createConnection(
           familyMemberUid: user.uid,
-          patientUid: patientUid,
+          patientUid: pair.uid,
           relation: _selectedRelation!,
+          patientPublicId: pair.publicId,
         );
       }
 
@@ -155,6 +164,9 @@ class _FamilyMemberSetupScreenState extends State<FamilyMemberSetupScreen> {
         relation: _selectedRelation!,
         patients: patients,
       );
+      await context.read<AuthNotifier>().addUserRole(
+            UserProfileRepository.roleFamilyMember,
+          );
 
       if (!mounted) return;
       _goToHome();
@@ -200,13 +212,15 @@ class _FamilyMemberSetupScreenState extends State<FamilyMemberSetupScreen> {
   Widget build(BuildContext context) {
     final loc = context.loc;
     final relations = _relationOptions(loc);
-    final canContinue = !_isSaving && _hasValidPatientInputs;
+    final canContinue =
+        !_isSaving && _hasValidPatientInputs && _selectedRelation != null;
 
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        
         iconTheme: const IconThemeData(color: Colors.black),
         title: Text(
           loc.t('familyMemberSetupTitle'),
@@ -278,11 +292,6 @@ class _FamilyMemberSetupScreenState extends State<FamilyMemberSetupScreen> {
                 const SizedBox(height: 24),
                 Row(
                   children: [
-                    TextButton(
-                      onPressed: _isSaving ? null : _goToHome,
-                      child: Text(loc.t('skipForNow')),
-                    ),
-                    const Spacer(),
                     ElevatedButton(
                       onPressed: canContinue ? _saveAndContinue : null,
                       style: ElevatedButton.styleFrom(
@@ -360,7 +369,7 @@ class _PatientField extends StatelessWidget {
       child: ValueListenableBuilder<TextEditingValue>(
         valueListenable: controller,
         builder: (context, value, child) {
-          final digits = value.text.trim();
+          final digits = value.text.replaceAll(RegExp(r'\D'), '');
           final showError = digits.isNotEmpty && digits.length < 6;
 
           return Column(
@@ -373,64 +382,32 @@ class _PatientField extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 14,
-                    ),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: theme.dividerColor),
-                    ),
-                    child: Text(
-                      'P-',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.disabledColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(6),
-                      ],
-                      maxLength: 6,
-                      buildCounter: (
-                        context, {
-                        required currentLength,
-                        required isFocused,
-                        maxLength,
-                      }) {
-                        return null;
-                      },
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      decoration: InputDecoration(
-                        hintText: '123456',
-                        prefixIcon: const Icon(Icons.person_add_alt_1),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        errorText:
-                            showError ? loc.t('patientIdDigitsError') : null,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    onPressed: canRemove ? onRemove : null,
-                    icon: const Icon(Icons.close),
-                    tooltip: 'Remove',
-                  ),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                inputFormatters: [
+                  PatientCodeInputFormatter(),
                 ],
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  hintText: '123 456',
+                  prefixText: 'P- ',
+                  prefixStyle: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                  suffixIcon: canRemove
+                      ? IconButton(
+                          onPressed: onRemove,
+                          icon: const Icon(Icons.close),
+                          tooltip: 'Remove',
+                        )
+                      : null,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  errorText: showError ? loc.t('patientIdDigitsError') : null,
+                ),
               ),
             ],
           );

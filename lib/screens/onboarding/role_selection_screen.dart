@@ -20,9 +20,22 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   static const String _patientRole = 'patient';
   static const String _familyRole = 'family_member';
   String? _selectedRole;
-  bool _isLoading = false;
+  bool _isSaving = false;
+
+  String _formatErrorMessage(Object error, {int maxLength = 140}) {
+    var message = error.toString().trim();
+    if (message.isEmpty) {
+      return 'Unknown error';
+    }
+    message = message.replaceAll(RegExp(r'\s+'), ' ');
+    if (message.length <= maxLength) {
+      return message;
+    }
+    return '${message.substring(0, maxLength - 3)}...';
+  }
 
   Future<void> _handleContinue() async {
+    if (_isSaving) return;
     if (_selectedRole == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a role')),
@@ -30,33 +43,63 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
-
     final auth = context.read<AuthNotifier>();
+    final user = auth.user;
+    if (user == null || user.uid.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You must be logged in to select a role')),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
     try {
-      await auth.updateUserRole(_selectedRole!);
-      if (!mounted) return;
       if (_selectedRole == _familyRole) {
+        final ensured = await auth.ensureProfileExistsForCurrentUser();
+        if (!mounted) return;
+        if (!ensured) {
+          final detail = _formatErrorMessage(
+            auth.lastErrorMessage ?? 'Unknown error',
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to save role: $detail')),
+          );
+          return;
+        }
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const FamilyMemberSetupScreen()),
         );
       } else {
+        final saved = await auth.updateUserRole(_selectedRole!);
+        if (!mounted) return;
+        if (!saved) {
+          final detail = _formatErrorMessage(
+            auth.lastErrorMessage ?? 'Unknown error',
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to save role: $detail')),
+          );
+          return;
+        }
         // Proactively navigate back to RootGate so it can route to Home.
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const RootGate()),
           (route) => false,
         );
       }
-    } catch (e) {
-      print(e);
+    } catch (e, stackTrace) {
+      debugPrint('Failed to save role: $e');
+      debugPrint(stackTrace.toString());
       if (mounted) {
+        final detail = _formatErrorMessage(e);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to save role')),
+          SnackBar(content: Text('Failed to save role: $detail')),
         );
       }
     } finally {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() => _isSaving = false);
       }
     }
   }
@@ -115,7 +158,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                   subtitle: 'I am the one who takes the medicines.',
                   icon: Icons.person,
                   isSelected: _selectedRole == _patientRole,
-                  onTap: _isLoading ? null : () => setState(() => _selectedRole = _patientRole),
+                  onTap: _isSaving ? null : () => setState(() => _selectedRole = _patientRole),
                 ),
                 const SizedBox(height: 16),
                 _KawaiiRoleCard(
@@ -124,16 +167,18 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                   subtitle: 'I help someone take their medicines.',
                   icon: Icons.family_restroom,
                   isSelected: _selectedRole == _familyRole,
-                  onTap: _isLoading ? null : () => setState(() => _selectedRole = _familyRole),
+                  onTap: _isSaving ? null : () => setState(() => _selectedRole = _familyRole),
                 ),
                 const Spacer(),
-                _isLoading
+                _isSaving
                     ? const Center(child: CircularProgressIndicator())
                     : SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
                           key: const Key('continueButton'),
-                          onPressed: _selectedRole == null ? null : _handleContinue,
+                          onPressed: _selectedRole == null || _isSaving
+                              ? null
+                              : _handleContinue,
                           style: ElevatedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 18),
                             shape: RoundedRectangleBorder(

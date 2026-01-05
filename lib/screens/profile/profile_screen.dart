@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -33,12 +34,24 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final ProfileService _service = ProfileService();
   final UserProfileRepository _profileRepo = UserProfileRepository();
+  Map<String, bool>? _rolesOverride;
 
   Future<({int taken, int missed, double adherence})> _loadWeeklyStats(
     String uid,
   ) async {
     // Use the new HistoryService-based method for accurate counts
     return await _service.getWeeklyAdherence(uid);
+  }
+
+  bool _rolesMatch(Map<String, bool>? left, Map<String, bool>? right) {
+    if (left == null || right == null) return false;
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (right[entry.key] != entry.value) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @override
@@ -174,9 +187,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           );
                         }
 
-                        final roles = UserProfileRepository.normalizeRoles(
+                        final rolesFromProfile =
+                            UserProfileRepository.normalizeRoles(
                           profileSnapshot.data,
                         );
+                        final roles = _rolesOverride ?? rolesFromProfile;
+                        if (_rolesOverride != null &&
+                            _rolesMatch(_rolesOverride, rolesFromProfile)) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!mounted) return;
+                            if (_rolesOverride != null &&
+                                _rolesMatch(_rolesOverride, rolesFromProfile)) {
+                              setState(() => _rolesOverride = null);
+                            }
+                          });
+                        }
 
                         final canAddRole = _availableRoles(roles).isNotEmpty;
 
@@ -185,6 +210,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           onAddRole: canAddRole
                               ? () => _showAddRoleSheet(context, roles)
                               : null,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream:
+                          _profileRepo.watchConnectionsForFamily(appUser.uid),
+                      builder: (context, connectionSnapshot) {
+                        if (connectionSnapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const _CardShell(height: 120);
+                        }
+                        if (connectionSnapshot.hasError) {
+                          return _ErrorCard(
+                            message: context.loc.t('failedLoad'),
+                          );
+                        }
+
+                        final docs = connectionSnapshot.data?.docs ?? [];
+                        if (docs.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+
+                        return _FamilyConnectionsSection(
+                          profileRepo: _profileRepo,
+                          connections: docs,
+                          relationLabel: _relationLabel,
                         );
                       },
                     ),
@@ -410,6 +462,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return options;
   }
 
+  String _relationLabel(BuildContext context, String? key) {
+    switch (key) {
+      case 'mother':
+        return context.loc.t('relationMother');
+      case 'father':
+        return context.loc.t('relationFather');
+      case 'brother':
+        return context.loc.t('relationBrother');
+      case 'sister':
+        return context.loc.t('relationSister');
+      case 'spouse':
+        return context.loc.t('relationSpouse');
+      case 'child':
+        return context.loc.t('relationChild');
+      case 'other':
+        return context.loc.t('relationOther');
+      default:
+        return key == null || key.isEmpty
+            ? context.loc.t('relationOther')
+            : key;
+    }
+  }
+
   void _showAddRoleSheet(BuildContext context, Map<String, bool> roles) {
     final options = _availableRoles(roles);
     if (options.isEmpty) {
@@ -475,9 +550,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return;
     }
 
-    try {
-      await context.read<AuthNotifier>().addUserRole(option.key);
+    final auth = context.read<AuthNotifier>();
+    final user = auth.user;
+    if (user == null) {
       if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.loc.t('pleaseSignIn'))),
+      );
+      return;
+    }
+
+    try {
+      if (option.requiresSetup) {
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const FamilyMemberSetupScreen()),
+        );
+        if (!mounted) return;
+        final refreshedProfile = await _profileRepo.getUserProfile(user.uid);
+        if (!mounted) return;
+        if (refreshedProfile != null) {
+          setState(
+            () =>
+                _rolesOverride =
+                    UserProfileRepository.normalizeRoles(refreshedProfile),
+          );
+        }
+        return;
+      }
+
+      await auth.addUserRole(option.key);
+      if (!mounted) return;
+      var updatedRoles = <String, bool>{
+        ...currentRoles,
+        option.key: true,
+      };
+      final refreshedProfile = await _profileRepo.getUserProfile(user.uid);
+      if (refreshedProfile != null) {
+        updatedRoles = UserProfileRepository.normalizeRoles(refreshedProfile);
+      }
+      if (!mounted) return;
+      setState(() => _rolesOverride = updatedRoles);
       if (option.requiresSetup) {
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const FamilyMemberSetupScreen()),
@@ -490,7 +602,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.loc.t('failedSave'))),
+        SnackBar(content: Text(context.loc.t('failedAddRole'))),
       );
     }
   }
@@ -613,6 +725,167 @@ class _RolesSection extends StatelessWidget {
       ),
     );
   }
+}
+
+class _FamilyConnectionsSection extends StatelessWidget {
+  final UserProfileRepository profileRepo;
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> connections;
+  final String Function(BuildContext, String?) relationLabel;
+
+  const _FamilyConnectionsSection({
+    required this.profileRepo,
+    required this.connections,
+    required this.relationLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final sorted = [...connections];
+    sorted.sort((a, b) {
+      final statusA = a.data()['status'] as String? ?? '';
+      final statusB = b.data()['status'] as String? ?? '';
+      if (statusA == statusB) return 0;
+      if (statusA == 'pending') return -1;
+      if (statusB == 'pending') return 1;
+      return statusA.compareTo(statusB);
+    });
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.link, color: Colors.teal),
+              const SizedBox(width: 8),
+              Text(
+                context.loc.t('connectionRequests'),
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: sorted.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              return _FamilyConnectionTile(
+                profileRepo: profileRepo,
+                connection: sorted[index],
+                relationLabel: relationLabel,
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FamilyConnectionTile extends StatelessWidget {
+  final UserProfileRepository profileRepo;
+  final QueryDocumentSnapshot<Map<String, dynamic>> connection;
+  final String Function(BuildContext, String?) relationLabel;
+
+  const _FamilyConnectionTile({
+    required this.profileRepo,
+    required this.connection,
+    required this.relationLabel,
+  });
+
+  Future<_ConnectionPatientLabel> _loadPatientLabel(
+    Map<String, dynamic> data,
+  ) async {
+    final patientUid = data['patientUid'] as String? ?? '';
+    String? publicId = data['patientPublicId'] as String?;
+    if ((publicId == null || publicId.isEmpty) && patientUid.isNotEmpty) {
+      final patientDoc = await FirebaseFirestore.instance
+          .collection('patients')
+          .doc(patientUid)
+          .get();
+      publicId = patientDoc.data()?['publicId'] as String?;
+    }
+    final profile = patientUid.isEmpty
+        ? null
+        : await profileRepo.getProfile(patientUid);
+    final name = profile?['name'] as String?;
+    return _ConnectionPatientLabel(name: name, publicId: publicId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = connection.data();
+    final status = data['status'] as String? ?? 'pending';
+    final isPending = status == 'pending';
+    final relation = data['relation'] as String?;
+
+    return FutureBuilder<_ConnectionPatientLabel>(
+      future: _loadPatientLabel(data),
+      builder: (context, snapshot) {
+        final label = snapshot.data;
+        final title = (label?.name != null && label!.name!.isNotEmpty)
+            ? label.name!
+            : (label?.publicId ?? context.loc.t('patient'));
+
+        final subtitleParts = <String>[
+          if (label?.publicId != null && label!.publicId!.isNotEmpty)
+            label.publicId!,
+          if (relation != null && relation!.isNotEmpty)
+            relationLabel(context, relation),
+          isPending
+              ? context.loc.t('connectionPendingStatus')
+              : context.loc.t('connectionApprovedStatus'),
+        ];
+
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(title),
+          subtitle: Text(subtitleParts.join(' - ')),
+          trailing: isPending
+              ? TextButton(
+                  onPressed: () async {
+                    try {
+                      await profileRepo.cancelConnectionRequest(connection.id);
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(context.loc.t('requestCancelled')),
+                        ),
+                      );
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content:
+                              Text(context.loc.t('failedCancelRequest')),
+                        ),
+                      );
+                    }
+                  },
+                  child: Text(context.loc.t('cancelRequest')),
+                )
+              : null,
+        );
+      },
+    );
+  }
+}
+
+class _ConnectionPatientLabel {
+  final String? name;
+  final String? publicId;
+
+  const _ConnectionPatientLabel({this.name, this.publicId});
 }
 
 class _CardShell extends StatelessWidget {
