@@ -15,6 +15,7 @@ import '../../widgets/profile/profile_care_circle_section.dart';
 import '../../widgets/profile/profile_header.dart';
 import '../../widgets/profile/profile_settings_list.dart';
 import '../../widgets/profile/profile_stats_grid.dart';
+import '../../widgets/gamification_info_sheet.dart';
 import '../auth/login_screen.dart';
 import '../history/history_7days_screen.dart';
 import '../settings/about_screen.dart';
@@ -130,13 +131,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    ProfileStatsGrid(
-                      points: appUser.points,
-                      streakDays: appUser.streakDays,
-                      badgesCount: 0,
-                      level: appUser.level,
-                      progress: appUser.levelProgress,
-                      nextLevelPoints: appUser.nextLevelPoints,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ProfileStatsGrid(
+                            points: appUser.points,
+                            streakDays: appUser.streakDays,
+                            badgesCount: appUser.badges.length,
+                            level: appUser.level,
+                            progress: appUser.levelProgress,
+                            nextLevelPoints: appUser.nextLevelPoints,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        GestureDetector(
+                          onTap: () => GamificationInfoSheet.show(context),
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF23C3AE),
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(
+                                    0xFF23C3AE,
+                                  ).withOpacity(0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.info_outline,
+                              color: Colors.white,
+                              size: 28,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 20),
                     FutureBuilder<({int taken, int missed, double adherence})>(
@@ -170,7 +202,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       },
                     ),
                     const SizedBox(height: 20),
-                    const ProfileAchievementsRow(badges: []),
+                    ProfileAchievementsRow(badgeIds: appUser.badges),
                     const SizedBox(height: 16),
                     const ProfileCareCircleSection(),
                     const SizedBox(height: 16),
@@ -189,8 +221,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                         final rolesFromProfile =
                             UserProfileRepository.normalizeRoles(
-                          profileSnapshot.data,
-                        );
+                              profileSnapshot.data,
+                            );
                         final roles = _rolesOverride ?? rolesFromProfile;
                         if (_rolesOverride != null &&
                             _rolesMatch(_rolesOverride, rolesFromProfile)) {
@@ -215,8 +247,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     const SizedBox(height: 16),
                     StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                      stream:
-                          _profileRepo.watchConnectionsForFamily(appUser.uid),
+                      stream: _profileRepo.watchConnectionsForFamily(
+                        appUser.uid,
+                      ),
                       builder: (context, connectionSnapshot) {
                         if (connectionSnapshot.connectionState ==
                             ConnectionState.waiting) {
@@ -244,7 +277,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ProfileSettingsList(
                       shareWithFamily: appUser.shareWithFamily,
                       onToggleShare: (val) =>
-                        _service.updateShareWithFamily(appUser.uid, val),
+                          _service.updateShareWithFamily(appUser.uid, val),
                       onOpenNotifications: () => Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => const NotificationsSettingsScreen(),
@@ -415,20 +448,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: 12),
               Text(
                 context.loc.t('theme'),
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
               ),
               const SizedBox(height: 8),
-              ...choices.map((c) => ListTile(
-                    leading: CircleAvatar(backgroundColor: c.primary),
-                    title: Text(c.name),
-                    trailing: themeController.themeKey == c.key
-                        ? const Icon(Icons.check, color: Colors.teal)
-                        : null,
-                    onTap: () {
-                      themeController.setTheme(c.key);
-                      Navigator.of(context).pop();
-                    },
-                  )),
+              ...choices.map(
+                (c) => ListTile(
+                  leading: CircleAvatar(backgroundColor: c.primary),
+                  title: Text(c.name),
+                  trailing: themeController.themeKey == c.key
+                      ? const Icon(Icons.check, color: Colors.teal)
+                      : null,
+                  onTap: () {
+                    themeController.setTheme(c.key);
+                    Navigator.of(context).pop();
+                  },
+                ),
+              ),
               const SizedBox(height: 8),
             ],
           ),
@@ -488,9 +526,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _showAddRoleSheet(BuildContext context, Map<String, bool> roles) {
     final options = _availableRoles(roles);
     if (options.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.loc.t('allRolesAdded'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.loc.t('allRolesAdded'))));
       return;
     }
 
@@ -516,8 +554,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: 12),
               Text(
                 context.loc.t('chooseRoleToAdd'),
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
               ),
               const SizedBox(height: 8),
               ...options.map(
@@ -554,9 +594,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final user = auth.user;
     if (user == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.loc.t('pleaseSignIn'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.loc.t('pleaseSignIn'))));
       return;
     }
 
@@ -570,9 +610,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (!mounted) return;
         if (refreshedProfile != null) {
           setState(
-            () =>
-                _rolesOverride =
-                    UserProfileRepository.normalizeRoles(refreshedProfile),
+            () => _rolesOverride = UserProfileRepository.normalizeRoles(
+              refreshedProfile,
+            ),
           );
         }
         return;
@@ -580,10 +620,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       await auth.addUserRole(option.key);
       if (!mounted) return;
-      var updatedRoles = <String, bool>{
-        ...currentRoles,
-        option.key: true,
-      };
+      var updatedRoles = <String, bool>{...currentRoles, option.key: true};
       final refreshedProfile = await _profileRepo.getUserProfile(user.uid);
       if (refreshedProfile != null) {
         updatedRoles = UserProfileRepository.normalizeRoles(refreshedProfile);
@@ -595,15 +632,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
           MaterialPageRoute(builder: (_) => const FamilyMemberSetupScreen()),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.loc.t('roleAdded'))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(context.loc.t('roleAdded'))));
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.loc.t('failedAddRole'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.loc.t('failedAddRole'))));
     }
   }
 }
@@ -626,10 +663,7 @@ class _RolesSection extends StatelessWidget {
   final Map<String, bool> roles;
   final VoidCallback? onAddRole;
 
-  const _RolesSection({
-    required this.roles,
-    required this.onAddRole,
-  });
+  const _RolesSection({required this.roles, required this.onAddRole});
 
   List<String> _orderedRoles() {
     const known = [
@@ -678,10 +712,9 @@ class _RolesSection extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 context.loc.t('roles'),
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
               const Spacer(),
               TextButton.icon(
@@ -765,10 +798,9 @@ class _FamilyConnectionsSection extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 context.loc.t('connectionRequests'),
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -840,7 +872,7 @@ class _FamilyConnectionTile extends StatelessWidget {
         final subtitleParts = <String>[
           if (label?.publicId != null && label!.publicId!.isNotEmpty)
             label.publicId!,
-          if (relation != null && relation!.isNotEmpty)
+          if (relation != null && relation.isNotEmpty)
             relationLabel(context, relation),
           isPending
               ? context.loc.t('connectionPendingStatus')
@@ -866,8 +898,7 @@ class _FamilyConnectionTile extends StatelessWidget {
                       if (!context.mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content:
-                              Text(context.loc.t('failedCancelRequest')),
+                          content: Text(context.loc.t('failedCancelRequest')),
                         ),
                       );
                     }

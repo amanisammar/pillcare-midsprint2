@@ -57,7 +57,7 @@ class HistoryService {
   /// Get summary for a specific date
   Future<DaySummary> getDaySummary(String uid, DateTime date) async {
     final dateKey = _buildDateKey(date);
-    
+
     // Get all scheduled doses for this date
     final scheduledDoses = await getScheduledDoseInstancesForDate(uid, date);
     final scheduledCount = scheduledDoses.length;
@@ -81,7 +81,10 @@ class HistoryService {
         .collection('users')
         .doc(uid)
         .collection('doseLogs')
-        .where('scheduledAt', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+        .where(
+          'scheduledAt',
+          isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay),
+        )
         .where('scheduledAt', isLessThan: Timestamp.fromDate(endOfDay))
         .get();
 
@@ -124,7 +127,6 @@ class HistoryService {
     DateTime date,
   ) async {
     final instances = <DoseInstance>[];
-    final currentDay = _getCurrentDay(date.weekday);
     final dateOnly = DateTime(date.year, date.month, date.day);
 
     // Get all medicines for this user
@@ -199,12 +201,14 @@ class HistoryService {
 
       for (final timeKey in times) {
         final scheduledAt = _combineDateAndTimeKey(dateOnly, timeKey);
-        instances.add(DoseInstance(
-          medicineId: medicineId,
-          medName: medName,
-          timeKey: timeKey,
-          scheduledAt: scheduledAt,
-        ));
+        instances.add(
+          DoseInstance(
+            medicineId: medicineId,
+            medName: medName,
+            timeKey: timeKey,
+            scheduledAt: scheduledAt,
+          ),
+        );
       }
     }
 
@@ -216,25 +220,11 @@ class HistoryService {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
-  /// Get current day name from weekday number
-  String _getCurrentDay(int weekday) {
-    const days = [
-      'Monday',
-      'Tuesday',
-      'Wednesday',
-      'Thursday',
-      'Friday',
-      'Saturday',
-      'Sunday',
-    ];
-    return days[weekday - 1];
-  }
-
   /// Combine date and time key into DateTime
   DateTime _combineDateAndTimeKey(DateTime day, String timeKey) {
     final parts = timeKey.split(':');
     if (parts.length != 2) return day;
-    
+
     final hour = int.tryParse(parts[0]) ?? 0;
     final minute = int.tryParse(parts[1]) ?? 0;
     return DateTime(day.year, day.month, day.day, hour, minute);
@@ -250,7 +240,10 @@ class HistoryService {
         .collection('users')
         .doc(uid)
         .collection('doseLogs')
-        .where('scheduledAt', isGreaterThanOrEqualTo: Timestamp.fromDate(startDate))
+        .where(
+          'scheduledAt',
+          isGreaterThanOrEqualTo: Timestamp.fromDate(startDate),
+        )
         .snapshots()
         .asyncMap((_) => getLast7DaysSummary(uid));
   }

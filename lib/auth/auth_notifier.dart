@@ -3,12 +3,14 @@ import 'package:flutter/foundation.dart';
 
 import '../data/user_profile_repository.dart';
 import 'auth_status.dart';
+import '../services/test_data_seeder.dart';
 
 /// AuthNotifier manages Firebase authentication state and provides
 /// observable auth status and user info to the app via Provider.
 class AuthNotifier extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final UserProfileRepository _profileRepo = UserProfileRepository();
+  final TestDataSeeder _testDataSeeder = TestDataSeeder();
 
   User? _user;
   AuthStatus _status = AuthStatus.uninitialized;
@@ -58,6 +60,7 @@ class AuthNotifier extends ChangeNotifier {
               email: email,
               name: '',
             );
+            await _testDataSeeder.ensureSeeded(firebaseUser);
           } catch (e) {
             if (kDebugMode) {
               debugPrint('ensureProfileExists error: $e');

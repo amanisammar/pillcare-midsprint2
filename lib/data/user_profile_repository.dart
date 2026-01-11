@@ -49,10 +49,7 @@ class UserProfileRepository {
         'name': name,
         'email': email,
         'role': '', // Empty initially, set later in role selection
-        'roles': {
-          rolePatient: false,
-          roleFamilyMember: false,
-        },
+        'roles': {rolePatient: false, roleFamilyMember: false},
         if (birthDate != null) 'birthDate': Timestamp.fromDate(birthDate),
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -81,10 +78,7 @@ class UserProfileRepository {
           if (hasName) 'name': trimmedName,
           if (hasName) 'displayName': trimmedName,
           if (hasEmail) 'email': trimmedEmail,
-          'roles': {
-            rolePatient: false,
-            roleFamilyMember: false,
-          },
+          'roles': {rolePatient: false, roleFamilyMember: false},
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         };
@@ -107,10 +101,7 @@ class UserProfileRepository {
       final updates = <String, Object?>{};
       if (needsRoleInit) {
         updates['roles'] = rolesMap.isEmpty
-            ? {
-                rolePatient: false,
-                roleFamilyMember: false,
-              }
+            ? {rolePatient: false, roleFamilyMember: false}
             : rolesMap;
       }
 
@@ -248,8 +239,9 @@ class UserProfileRepository {
       final random = Random();
       for (var attempt = 0; attempt < 6; attempt++) {
         final candidate = _generatePublicId(random);
-        final mappingRef =
-            _firestore.collection(_publicIdsCollection).doc(candidate);
+        final mappingRef = _firestore
+            .collection(_publicIdsCollection)
+            .doc(candidate);
         try {
           await _firestore.runTransaction((txn) async {
             final mappingDoc = await txn.get(mappingRef);
@@ -279,8 +271,9 @@ class UserProfileRepository {
   }
 
   Future<void> _ensurePublicIdMapping(String uid, String publicId) async {
-    final mappingRef =
-        _firestore.collection(_publicIdsCollection).doc(publicId);
+    final mappingRef = _firestore
+        .collection(_publicIdsCollection)
+        .doc(publicId);
     final mappingDoc = await mappingRef.get();
     if (!mappingDoc.exists) {
       await mappingRef.set({
@@ -292,8 +285,10 @@ class UserProfileRepository {
 
   Future<String?> findPatientUidByPublicId(String publicId) async {
     try {
-      final mappingDoc =
-          await _firestore.collection(_publicIdsCollection).doc(publicId).get();
+      final mappingDoc = await _firestore
+          .collection(_publicIdsCollection)
+          .doc(publicId)
+          .get();
       final mappedUid = mappingDoc.data()?['uid'] as String?;
       if (mappedUid != null && mappedUid.isNotEmpty) {
         return mappedUid;
@@ -317,8 +312,10 @@ class UserProfileRepository {
     required String patientUid,
   }) async {
     final docId = _connectionId(familyMemberUid, patientUid);
-    final doc =
-        await _firestore.collection(_connectionsCollection).doc(docId).get();
+    final doc = await _firestore
+        .collection(_connectionsCollection)
+        .doc(docId)
+        .get();
     return doc.exists;
   }
 
@@ -358,9 +355,8 @@ class UserProfileRepository {
     });
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> watchPendingMedicineRequestsForPatient(
-    String patientUid,
-  ) {
+  Stream<QuerySnapshot<Map<String, dynamic>>>
+  watchPendingMedicineRequestsForPatient(String patientUid) {
     return _firestore
         .collection(_medicineRequestsCollection)
         .where('patientUid', isEqualTo: patientUid)
@@ -368,11 +364,10 @@ class UserProfileRepository {
         .snapshots();
   }
 
-  Future<void> approveMedicineRequest({
-    required String requestId,
-  }) async {
-    final requestRef =
-        _firestore.collection(_medicineRequestsCollection).doc(requestId);
+  Future<void> approveMedicineRequest({required String requestId}) async {
+    final requestRef = _firestore
+        .collection(_medicineRequestsCollection)
+        .doc(requestId);
 
     await _firestore.runTransaction((txn) async {
       final requestSnap = await txn.get(requestRef);
@@ -403,10 +398,13 @@ class UserProfileRepository {
   }
 
   Future<void> rejectMedicineRequest(String requestId) async {
-    await _firestore.collection(_medicineRequestsCollection).doc(requestId).update({
-      'status': 'rejected',
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    await _firestore
+        .collection(_medicineRequestsCollection)
+        .doc(requestId)
+        .update({
+          'status': 'rejected',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchPendingConnectionsForPatient(
@@ -438,9 +436,8 @@ class UserProfileRepository {
         .snapshots();
   }
 
-  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> getConnectionsForFamily(
-    String familyMemberUid,
-  ) async {
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  getConnectionsForFamily(String familyMemberUid) async {
     final snapshot = await _firestore
         .collection(_connectionsCollection)
         .where('familyMemberUid', isEqualTo: familyMemberUid)
@@ -449,8 +446,9 @@ class UserProfileRepository {
   }
 
   Future<void> approveConnection(String connectionId) async {
-    final connectionRef =
-        _firestore.collection(_connectionsCollection).doc(connectionId);
+    final connectionRef = _firestore
+        .collection(_connectionsCollection)
+        .doc(connectionId);
 
     await _firestore.runTransaction((txn) async {
       final snapshot = await txn.get(connectionRef);
@@ -468,8 +466,9 @@ class UserProfileRepository {
         });
       }
 
-      final familyRef =
-          _firestore.collection(_usersCollection).doc(familyMemberUid);
+      final familyRef = _firestore
+          .collection(_usersCollection)
+          .doc(familyMemberUid);
       final familySnap = await txn.get(familyRef);
       final roleUpdates = _buildRoleUpdate(
         data: familySnap.data(),
@@ -490,21 +489,6 @@ class UserProfileRepository {
     await _firestore.runTransaction((txn) async {
       final snapshot = await txn.get(docRef);
       final updates = _buildRoleUpdate(data: snapshot.data());
-      txn.set(docRef, updates, SetOptions(merge: true));
-    });
-  }
-
-  Future<void> _upsertRoles({
-    required String uid,
-    required String addRole,
-  }) async {
-    final docRef = _firestore.collection(_usersCollection).doc(uid);
-    await _firestore.runTransaction((txn) async {
-      final snapshot = await txn.get(docRef);
-      final updates = _buildRoleUpdate(
-        data: snapshot.data(),
-        addRole: addRole,
-      );
       txn.set(docRef, updates, SetOptions(merge: true));
     });
   }
@@ -537,7 +521,7 @@ class UserProfileRepository {
 
     if (cleanDottedFields && data != null) {
       for (final key in data.keys) {
-        if (key is String && key.startsWith('roles.')) {
+        if (key.startsWith('roles.')) {
           updates[FieldPath([key])] = FieldValue.delete();
         }
       }
@@ -565,7 +549,7 @@ class UserProfileRepository {
     }
 
     for (final key in data.keys) {
-      if (key is String && key.startsWith('roles.')) {
+      if (key.startsWith('roles.')) {
         return true;
       }
     }
@@ -581,11 +565,17 @@ class UserProfileRepository {
   }
 
   Future<void> rejectConnection(String connectionId) async {
-    await _firestore.collection(_connectionsCollection).doc(connectionId).delete();
+    await _firestore
+        .collection(_connectionsCollection)
+        .doc(connectionId)
+        .delete();
   }
 
   Future<void> cancelConnectionRequest(String connectionId) async {
-    await _firestore.collection(_connectionsCollection).doc(connectionId).delete();
+    await _firestore
+        .collection(_connectionsCollection)
+        .doc(connectionId)
+        .delete();
   }
 
   String _connectionId(String familyMemberUid, String patientUid) {
@@ -619,10 +609,7 @@ class UserProfileRepository {
   }) async {
     try {
       await _firestore.collection(_usersCollection).doc(uid).set({
-        'familyMember': {
-          'relation': relation,
-          'patients': patients,
-        },
+        'familyMember': {'relation': relation, 'patients': patients},
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {

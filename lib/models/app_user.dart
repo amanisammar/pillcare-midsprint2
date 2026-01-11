@@ -10,6 +10,7 @@ class AppUser {
   final bool shareWithFamily;
   final String? timezone;
   final DateTime createdAt;
+  final List<String> badges;
 
   const AppUser({
     required this.uid,
@@ -21,6 +22,7 @@ class AppUser {
     this.shareWithFamily = false,
     this.timezone,
     required this.createdAt,
+    this.badges = const [],
   });
 
   factory AppUser.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -28,13 +30,15 @@ class AppUser {
     return AppUser(
       uid: doc.id,
       email: data['email'] as String? ?? '',
-      displayName: data['displayName'] as String? ?? data['name'] as String? ?? '',
+      displayName:
+          data['displayName'] as String? ?? data['name'] as String? ?? '',
       photoUrl: data['photoUrl'] as String?,
       points: (data['points'] as num?)?.toInt() ?? 0,
       streakDays: (data['streakDays'] as num?)?.toInt() ?? 0,
       shareWithFamily: data['shareWithFamily'] as bool? ?? false,
       timezone: data['timezone'] as String?,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      badges: ((data['badges'] as List?) ?? []).cast<String>(),
     );
   }
 
@@ -48,6 +52,7 @@ class AppUser {
       'shareWithFamily': shareWithFamily,
       'timezone': timezone,
       'createdAt': Timestamp.fromDate(createdAt),
+      'badges': badges,
     };
   }
 

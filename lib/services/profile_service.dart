@@ -36,6 +36,9 @@ class ProfileService {
     final user = _auth.currentUser;
     if (user != null) {
       await user.updateDisplayName(name);
+      await user.reload();
+      // Force auth state to refresh
+      await _auth.authStateChanges().first;
     }
   }
 
@@ -50,6 +53,9 @@ class ProfileService {
     final user = _auth.currentUser;
     if (user != null) {
       await user.updatePhotoURL(url);
+      await user.reload();
+      // Force auth state to refresh
+      await _auth.authStateChanges().first;
     }
   }
 
@@ -87,15 +93,9 @@ class ProfileService {
     final ref = _storage.ref().child(path);
 
     if (bytes != null) {
-      await ref.putData(
-        bytes,
-        SettableMetadata(contentType: 'image/jpeg'),
-      );
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
     } else if (file != null) {
-      await ref.putFile(
-        file,
-        SettableMetadata(contentType: 'image/jpeg'),
-      );
+      await ref.putFile(file, SettableMetadata(contentType: 'image/jpeg'));
     }
 
     final url = await ref.getDownloadURL();
@@ -154,10 +154,10 @@ class ProfileService {
     final taken = logs.where((l) => l.status == DoseStatus.taken).length;
     final total = logs.length;
     final adherence = total == 0 ? 0.0 : (taken / total) * 100;
-    
+
     // Calculate missed based on what we have
     final missed = total - taken;
-    
+
     return (taken: taken, missed: missed, adherence: adherence);
   }
 
@@ -166,15 +166,18 @@ class ProfileService {
     String uid,
   ) async {
     final summaries = await _historyService.getLast7DaysSummary(uid);
-    
+
     final totalTaken = summaries.fold<int>(0, (acc, s) => acc + s.takenCount);
     final totalMissed = summaries.fold<int>(0, (acc, s) => acc + s.missedCount);
-    final totalScheduled = summaries.fold<int>(0, (acc, s) => acc + s.scheduledCount);
-    
-    final adherence = totalScheduled > 0 
-        ? (totalTaken / totalScheduled) * 100 
+    final totalScheduled = summaries.fold<int>(
+      0,
+      (acc, s) => acc + s.scheduledCount,
+    );
+
+    final adherence = totalScheduled > 0
+        ? (totalTaken / totalScheduled) * 100
         : 0.0;
-    
+
     return (taken: totalTaken, missed: totalMissed, adherence: adherence);
   }
 

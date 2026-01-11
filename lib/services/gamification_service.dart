@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+import '../models/badge.dart';
 import 'history_service.dart';
 
 class GamificationResult {
@@ -10,6 +11,9 @@ class GamificationResult {
   final bool fullDayAwarded;
   final bool onTime;
   final double? fullDayAdherence;
+  final String? newBadgeEarned; // Newly earned badge ID, if any
+  final bool leveledUp; // Whether user leveled up
+  final int? newLevel; // New level if leveled up
 
   const GamificationResult({
     required this.pointsAwarded,
@@ -18,13 +22,18 @@ class GamificationResult {
     required this.fullDayAwarded,
     required this.onTime,
     this.fullDayAdherence,
+    this.newBadgeEarned,
+    this.leveledUp = false,
+    this.newLevel,
   });
 }
 
 class GamificationService {
-  GamificationService({FirebaseFirestore? firestore, HistoryService? historyService})
-      : _firestore = firestore ?? FirebaseFirestore.instance,
-        _historyService = historyService ?? HistoryService();
+  GamificationService({
+    FirebaseFirestore? firestore,
+    HistoryService? historyService,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _historyService = historyService ?? HistoryService();
 
   final FirebaseFirestore _firestore;
   final HistoryService _historyService;
@@ -51,7 +60,9 @@ class GamificationService {
     required DateTime takenAt,
   }) async {
     final dateKey = _buildDateKey(scheduledAt);
-    final onTime = takenAt.isBefore(scheduledAt.add(const Duration(minutes: 30)));
+    final onTime = takenAt.isBefore(
+      scheduledAt.add(const Duration(minutes: 30)),
+    );
     final basePoints = onTime ? 10 : 5;
 
     try {
@@ -67,14 +78,20 @@ class GamificationService {
       final awardedFullDays = awardedFullDaysRaw.cast<String>().toSet();
 
       // Compute streak with zero-meds grace.
-      final todayDate = DateTime(scheduledAt.year, scheduledAt.month, scheduledAt.day);
+      final todayDate = DateTime(
+        scheduledAt.year,
+        scheduledAt.month,
+        scheduledAt.day,
+      );
       int updatedStreak = currentStreak;
 
       if (lastStreakDate == null) {
         updatedStreak = 1;
       } else {
         final lastDate = _parseDateKey(lastStreakDate);
-        final gap = todayDate.difference(DateTime(lastDate.year, lastDate.month, lastDate.day)).inDays;
+        final gap = todayDate
+            .difference(DateTime(lastDate.year, lastDate.month, lastDate.day))
+            .inDays;
 
         if (gap == 0) {
           // already counted today
@@ -86,7 +103,8 @@ class GamificationService {
           for (int i = 1; i < gap; i++) {
             final checkDate = lastDate.add(Duration(days: i));
             final summary = await _historyService.getDaySummary(uid, checkDate);
-            if (summary.scheduledCount > 0 && summary.takenCount < summary.scheduledCount) {
+            if (summary.scheduledCount > 0 &&
+                summary.takenCount < summary.scheduledCount) {
               broke = true;
               break;
             }
@@ -95,7 +113,9 @@ class GamificationService {
         }
       }
 
-      final newLongest = updatedStreak > longestStreak ? updatedStreak : longestStreak;
+      final newLongest = updatedStreak > longestStreak
+          ? updatedStreak
+          : longestStreak;
       bool streakMilestone = _streakMilestones.contains(updatedStreak);
 
       // Full day adherence award (after logging dose, recompute day summary)
@@ -111,15 +131,29 @@ class GamificationService {
       }
 
       final totalAward = basePoints + extraPoints;
+      final newPoints = currentPoints + totalAward;
+
+      // Check for level up (200 points per level)
+      final oldLevel = (currentPoints ~/ 200) + 1;
+      final newLevel = (newPoints ~/ 200) + 1;
+      final leveledUp = newLevel > oldLevel;
 
       await userRef.set({
-        'points': currentPoints + totalAward,
+        'points': newPoints,
         'streakDays': updatedStreak,
         'longestStreak': newLongest,
         'lastStreakDate': dateKey,
         'awardedFullDays': awardedFullDays.toList(),
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      // Check for badge unlocks and get newly earned badge
+      final newBadgeEarned = await _checkAndAwardBadges(
+        uid,
+        newPoints,
+        updatedStreak,
+        fullDayAwarded,
+      );
 
       return GamificationResult(
         pointsAwarded: totalAward,
@@ -128,6 +162,9 @@ class GamificationService {
         fullDayAwarded: fullDayAwarded,
         onTime: onTime,
         fullDayAdherence: daySummary.adherencePercent,
+        newBadgeEarned: newBadgeEarned,
+        leveledUp: leveledUp,
+        newLevel: leveledUp ? newLevel : null,
       );
     } catch (e) {
       if (kDebugMode) {
@@ -139,6 +176,9 @@ class GamificationService {
         streakMilestone: false,
         fullDayAwarded: false,
         onTime: false,
+        newBadgeEarned: null,
+        leveledUp: false,
+        newLevel: null,
       );
     }
   }
@@ -163,10 +203,137 @@ class GamificationService {
         'profileCompleted': true,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      // Award Profile Star badge
+      await _awardBadgeIfNotOwned(uid, 'profile_star');
     } catch (e) {
       if (kDebugMode) {
         debugPrint('Gamification profile completion error: $e');
       }
+    }
+  }
+
+  /// Check and award badges based on user progress, return newly earned badge ID
+  Future<String?> _checkAndAwardBadges(
+    String uid,
+    int currentPoints,
+    int currentStreak,
+    bool fullDayAwarded,
+  ) async {
+    try {
+      // First Steps - earn any points
+      if (currentPoints > 0) {
+        if (await _awardBadgeIfNotOwned(uid, 'first_steps')) {
+          return 'first_steps';
+        }
+      }
+
+      // 3-Day Warrior
+      if (currentStreak >= 3) {
+        if (await _awardBadgeIfNotOwned(uid, 'three_day_warrior')) {
+          return 'three_day_warrior';
+        }
+      }
+
+      // Week Warrior
+      if (currentStreak >= 7) {
+        if (await _awardBadgeIfNotOwned(uid, 'week_warrior')) {
+          return 'week_warrior';
+        }
+      }
+
+      // Month Master
+      if (currentStreak >= 30) {
+        if (await _awardBadgeIfNotOwned(uid, 'month_master')) {
+          return 'month_master';
+        }
+      }
+
+      // Century
+      if (currentPoints >= 100) {
+        if (await _awardBadgeIfNotOwned(uid, 'century')) {
+          return 'century';
+        }
+      }
+
+      // Perfect Day
+      if (fullDayAwarded) {
+        if (await _awardBadgeIfNotOwned(uid, 'perfect_day')) {
+          return 'perfect_day';
+        }
+      }
+
+      return null;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Badge check error: $e');
+      }
+      return null;
+    }
+  }
+
+  /// Award a badge if user doesn't already own it, returns true if newly awarded
+  Future<bool> _awardBadgeIfNotOwned(String uid, String badgeId) async {
+    try {
+      final userRef = _firestore.collection('users').doc(uid);
+      final userSnap = await userRef.get();
+      final data = userSnap.data() ?? {};
+      final badgesRaw = (data['badges'] as List?) ?? [];
+      final badges = badgesRaw.cast<String>();
+
+      // Check if badge already owned
+      if (badges.contains(badgeId)) {
+        return false; // Already owned, not newly awarded
+      }
+
+      // Add new badge
+      await userRef.update({
+        'badges': FieldValue.arrayUnion([badgeId]),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      if (kDebugMode) {
+        debugPrint('Badge awarded: $badgeId');
+      }
+
+      return true; // Newly awarded
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Award badge error: $e');
+      }
+      return false; // Error, not awarded
+    }
+  }
+
+  /// Get user's earned badges
+  Future<List<Badge>> getUserBadges(String uid) async {
+    try {
+      final userRef = _firestore.collection('users').doc(uid);
+      final userSnap = await userRef.get();
+      final data = userSnap.data() ?? {};
+      final badgesRaw = (data['badges'] as List?) ?? [];
+      final badgeIds = badgesRaw.cast<String>();
+
+      final badges = <Badge>[];
+      for (final badgeId in badgeIds) {
+        badges.add(
+          Badge(
+            id: badgeId,
+            name: BadgeDefinitions.getName(badgeId),
+            emoji: BadgeDefinitions.getEmoji(badgeId),
+            description: BadgeDefinitions.getDescription(badgeId),
+            unlockedAt:
+                DateTime.now(), // Would need timestamp if stored separately
+          ),
+        );
+      }
+
+      return badges;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Get badges error: $e');
+      }
+      return [];
     }
   }
 }

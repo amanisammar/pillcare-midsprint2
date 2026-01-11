@@ -44,6 +44,12 @@ class ProfileStatsGrid extends StatelessWidget {
           icon: Icons.emoji_events_outlined,
           color: Colors.indigo,
         ),
+        const SizedBox(width: 12),
+        _LevelCard(
+          level: level,
+          progress: progress,
+          nextLevelPoints: nextLevelPoints,
+        ),
       ],
     );
   }
@@ -105,6 +111,84 @@ class _StatCard extends StatelessWidget {
             Text(
               title,
               style: const TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LevelCard extends StatelessWidget {
+  final int level;
+  final double progress;
+  final int nextLevelPoints;
+
+  const _LevelCard({
+    required this.level,
+    required this.progress,
+    required this.nextLevelPoints,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final double clamped = progress.clamp(0, 1.0).toDouble();
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF23C3AE).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.military_tech,
+                    color: Color(0xFF23C3AE),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  'Lv $level',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: clamped,
+                minHeight: 8,
+                backgroundColor: const Color(
+                  0xFF23C3AE,
+                ).withValues(alpha: 0.12),
+                valueColor: const AlwaysStoppedAnimation(Color(0xFF23C3AE)),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Next: $nextLevelPoints pts',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],
         ),

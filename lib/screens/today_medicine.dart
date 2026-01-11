@@ -9,6 +9,9 @@ import '../../l10n/app_localizations.dart';
 import '../services/dose_log_service.dart';
 import '../services/gamification_service.dart';
 import '../services/history_service.dart';
+import '../widgets/achievement_celebration_overlay.dart';
+import '../widgets/gamification_info_sheet.dart';
+import '../widgets/level_up_celebration_overlay.dart';
 import '../widgets/medicine_card.dart';
 
 class TodayMedicineTab extends StatefulWidget {
@@ -32,8 +35,9 @@ class _TodayMedicineTabState extends State<TodayMedicineTab> {
   final _doseLogService = DoseLogService();
   final _gamificationService = GamificationService();
   final _historyService = HistoryService();
-  final ConfettiController _confettiController =
-      ConfettiController(duration: const Duration(seconds: 1));
+  final ConfettiController _confettiController = ConfettiController(
+    duration: const Duration(seconds: 1),
+  );
 
   double? _weeklyAdherence;
   bool _loadingAdherence = false;
@@ -59,9 +63,14 @@ class _TodayMedicineTabState extends State<TodayMedicineTab> {
     setState(() => _loadingAdherence = true);
     try {
       final summaries = await _historyService.getLast7DaysSummary(user.uid);
-      final totalScheduled = summaries.fold<int>(0, (acc, s) => acc + s.scheduledCount);
+      final totalScheduled = summaries.fold<int>(
+        0,
+        (acc, s) => acc + s.scheduledCount,
+      );
       final totalTaken = summaries.fold<int>(0, (acc, s) => acc + s.takenCount);
-      final adherence = totalScheduled > 0 ? (totalTaken / totalScheduled) * 100 : 0.0;
+      final adherence = totalScheduled > 0
+          ? (totalTaken / totalScheduled) * 100
+          : 0.0;
       setState(() => _weeklyAdherence = adherence);
     } finally {
       if (mounted) {
@@ -94,7 +103,8 @@ class _TodayMedicineTabState extends State<TodayMedicineTab> {
       if (previousTakenList.contains(timeKey)) return;
 
       final updatedDailyTaken = Map<String, dynamic>.from(dailyTaken);
-      final updatedTakenList = List<String>.from(previousTakenList)..add(timeKey);
+      final updatedTakenList = List<String>.from(previousTakenList)
+        ..add(timeKey);
       updatedDailyTaken[todayDate] = updatedTakenList;
       await docRef.update({'dailyTaken': updatedDailyTaken});
 
@@ -198,6 +208,27 @@ class _TodayMedicineTabState extends State<TodayMedicineTab> {
     );
     ScaffoldMessenger.of(context).showSnackBar(snack);
 
+    // Show celebration if badge was earned
+    if (result.newBadgeEarned != null) {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          showAchievementCelebration(
+            context: context,
+            badgeId: result.newBadgeEarned!,
+          );
+        }
+      });
+    }
+
+    // Show level-up celebration if leveled up
+    if (result.leveledUp && result.newLevel != null) {
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) {
+          showLevelUpCelebration(context: context, newLevel: result.newLevel!);
+        }
+      });
+    }
+
     if (result.streakMilestone || result.fullDayAwarded) {
       _confettiController.play();
     }
@@ -211,9 +242,11 @@ class _TodayMedicineTabState extends State<TodayMedicineTab> {
     String medName,
   ) {
     final buffer = StringBuffer();
-    buffer.write(result.onTime
-        ? context.loc.t('statusTaken')
-        : context.loc.t('statusLate'));
+    buffer.write(
+      result.onTime
+          ? context.loc.t('statusTaken')
+          : context.loc.t('statusLate'),
+    );
     buffer.write(' ');
     buffer.write(medName);
     buffer.write(' ƒ?½ +');
@@ -270,17 +303,20 @@ class _TodayMedicineTabState extends State<TodayMedicineTab> {
                   Row(
                     children: [
                       Expanded(child: _PointsCard(points: points)),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       _StreakChip(streakDays: streak),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       _AdherenceRing(
                         adherence: _weeklyAdherence,
                         loading: _loadingAdherence,
                       ),
+                      const SizedBox(width: 8),
+                      _InfoButton(
+                        onTap: () => GamificationInfoSheet.show(context),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 12),
-
                   Text(
                     context.loc.t('todayMedicinesTitle'),
                     style: const TextStyle(
@@ -294,144 +330,159 @@ class _TodayMedicineTabState extends State<TodayMedicineTab> {
                     child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                       stream: stream,
                       builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) {
-                          return const Center(child: CircularProgressIndicator());
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
                         }
 
                         if (snapshot.hasError) {
-                          return Center(child: Text(context.loc.t('failedLoad')));
+                          return Center(
+                            child: Text(context.loc.t('failedLoad')),
+                          );
                         }
 
                         final docs = snapshot.data?.docs ?? [];
                         if (docs.isEmpty) {
-                          return Center(child: Text(context.loc.t('noMedicines')));
+                          return Center(
+                            child: Text(context.loc.t('noMedicines')),
+                          );
                         }
 
-                    final now = DateTime.now();
-                    final currentDay = _getCurrentDay(now.weekday);
-                    final currentTime = TimeOfDay.fromDateTime(now);
-                    final todayDate =
-                        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+                        final now = DateTime.now();
+                        final currentTime = TimeOfDay.fromDateTime(now);
+                        final todayDate =
+                            '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-                    /// 🔹 סינון תרופות לפי היום והתאריכים
-                    final filteredDocs = docs.where((doc) {
-                      final data = doc.data();
+                        /// 🔹 סינון תרופות לפי היום והתאריכים
+                        final filteredDocs = docs.where((doc) {
+                          final data = doc.data();
 
-                      /// 🔹 ימים (support storing List<int> or List<String>)
-                      final rawDays = data['days'] as List?;
-                      final daysSet = <int>{};
-                      if (rawDays != null) {
-                        for (final item in rawDays) {
-                          if (item is int) {
-                            if (item >= 1 && item <= 7) daysSet.add(item);
-                          } else if (item is String) {
-                            final lower = item.toLowerCase();
-                            switch (lower) {
-                              case 'monday':
-                                daysSet.add(1);
-                                break;
-                              case 'tuesday':
-                                daysSet.add(2);
-                                break;
-                              case 'wednesday':
-                                daysSet.add(3);
-                                break;
-                              case 'thursday':
-                                daysSet.add(4);
-                                break;
-                              case 'friday':
-                                daysSet.add(5);
-                                break;
-                              case 'saturday':
-                                daysSet.add(6);
-                                break;
-                              case 'sunday':
-                                daysSet.add(7);
-                                break;
-                              default:
-                                final parsed = int.tryParse(item);
-                                if (parsed != null && parsed >= 1 && parsed <= 7) {
-                                  daysSet.add(parsed);
+                          /// 🔹 ימים (support storing List<int> or List<String>)
+                          final rawDays = data['days'] as List?;
+                          final daysSet = <int>{};
+                          if (rawDays != null) {
+                            for (final item in rawDays) {
+                              if (item is int) {
+                                if (item >= 1 && item <= 7) daysSet.add(item);
+                              } else if (item is String) {
+                                final lower = item.toLowerCase();
+                                switch (lower) {
+                                  case 'monday':
+                                    daysSet.add(1);
+                                    break;
+                                  case 'tuesday':
+                                    daysSet.add(2);
+                                    break;
+                                  case 'wednesday':
+                                    daysSet.add(3);
+                                    break;
+                                  case 'thursday':
+                                    daysSet.add(4);
+                                    break;
+                                  case 'friday':
+                                    daysSet.add(5);
+                                    break;
+                                  case 'saturday':
+                                    daysSet.add(6);
+                                    break;
+                                  case 'sunday':
+                                    daysSet.add(7);
+                                    break;
+                                  default:
+                                    final parsed = int.tryParse(item);
+                                    if (parsed != null &&
+                                        parsed >= 1 &&
+                                        parsed <= 7) {
+                                      daysSet.add(parsed);
+                                    }
                                 }
+                              }
                             }
                           }
+                          final validDay = daysSet.contains(now.weekday);
+
+                          /// 🔹 תאריכים
+                          final startTimestamp =
+                              data['startDate'] as Timestamp?;
+                          final endTimestamp = data['endDate'] as Timestamp?;
+
+                          final nowDate = DateTime(
+                            now.year,
+                            now.month,
+                            now.day,
+                          );
+
+                          final startDate = startTimestamp?.toDate();
+                          final endDate = endTimestamp?.toDate();
+
+                          final validDate =
+                              (startDate == null ||
+                                  !nowDate.isBefore(startDate)) &&
+                              (endDate == null || !nowDate.isAfter(endDate));
+
+                          return validDay && validDate;
+                        }).toList();
+
+                        if (filteredDocs.isEmpty) {
+                          return Center(
+                            child: Text(context.loc.t('noMedicinesToday')),
+                          );
                         }
-                      }
-                      final validDay = daysSet.contains(now.weekday);
 
-                      /// 🔹 תאריכים
-                      final startTimestamp = data['startDate'] as Timestamp?;
-                      final endTimestamp = data['endDate'] as Timestamp?;
+                        /// 🔹 בניית רשימת תרופות להיום
+                        final todayMedicines = <Map<String, dynamic>>[];
 
-                      final nowDate = DateTime(now.year, now.month, now.day);
+                        for (final doc in filteredDocs) {
+                          final data = doc.data();
 
-                      final startDate = startTimestamp?.toDate();
-                      final endDate = endTimestamp?.toDate();
+                          final name = data['name'] as String? ?? 'Unnamed';
 
-                      final validDate =
-                          (startDate == null || !nowDate.isBefore(startDate)) &&
-                          (endDate == null || !nowDate.isAfter(endDate));
+                          final dosage = data['dosage'];
+                          final unit = data['unit'] ?? '';
+                          final dose = dosage != null
+                              ? '$dosage $unit'
+                              : unit.toString();
 
-                      return validDay && validDate;
-                    }).toList();
+                          final times =
+                              (data['timesOfDay'] as List?)?.cast<String>() ??
+                              [];
 
-                    if (filteredDocs.isEmpty) {
-                      return Center(
-                        child: Text(context.loc.t('noMedicinesToday')),
-                      );
-                    }
+                          final takenTimes =
+                              (data['dailyTaken']?[todayDate] as List?)
+                                  ?.cast<String>() ??
+                              [];
 
-                    /// 🔹 בניית רשימת תרופות להיום
-                    final todayMedicines = <Map<String, dynamic>>[];
+                          for (final timeKey in times) {
+                            final timeValue = _parseTime(timeKey);
+                            if (timeValue == null) continue;
 
-                    for (final doc in filteredDocs) {
-                      final data = doc.data();
+                            final isTaken = takenTimes.contains(timeKey);
+                            final status = isTaken
+                                ? 'taken'
+                                : _getStatus(timeKey, currentTime);
 
-                      final name = data['name'] as String? ?? 'Unnamed';
+                            todayMedicines.add({
+                              'name': name,
+                              'dose': dose,
+                              'timeLabel': _getTimeDisplay(timeKey),
+                              'timeValue': timeValue,
+                              'status': status,
+                              'isTaken': isTaken,
+                              'docId': doc.id,
+                              'timeKey': timeKey,
+                            });
+                          }
+                        }
 
-                      final dosage = data['dosage'];
-                      final unit = data['unit'] ?? '';
-                      final dose = dosage != null
-                          ? '$dosage $unit'
-                          : unit.toString();
-
-                      final times =
-                          (data['timesOfDay'] as List?)?.cast<String>() ?? [];
-
-                      final takenTimes =
-                          (data['dailyTaken']?[todayDate] as List?)
-                              ?.cast<String>() ??
-                          [];
-
-                      for (final timeKey in times) {
-                        final timeValue = _parseTime(timeKey);
-                        if (timeValue == null) continue;
-
-                        final isTaken = takenTimes.contains(timeKey);
-                        final status = isTaken
-                            ? 'taken'
-                            : _getStatus(timeKey, currentTime);
-
-                        todayMedicines.add({
-                          'name': name,
-                          'dose': dose,
-                          'timeLabel': _getTimeDisplay(timeKey),
-                          'timeValue': timeValue,
-                          'status': status,
-                          'isTaken': isTaken,
-                          'docId': doc.id,
-                          'timeKey': timeKey,
+                        /// 🔹 מיון מהבוקר לערב
+                        todayMedicines.sort((a, b) {
+                          final t1 = a['timeValue'] as TimeOfDay;
+                          final t2 = b['timeValue'] as TimeOfDay;
+                          return (t1.hour * 60 + t1.minute) -
+                              (t2.hour * 60 + t2.minute);
                         });
-                      }
-                    }
-
-                    /// 🔹 מיון מהבוקר לערב
-                    todayMedicines.sort((a, b) {
-                      final t1 = a['timeValue'] as TimeOfDay;
-                      final t2 = b['timeValue'] as TimeOfDay;
-                      return (t1.hour * 60 + t1.minute) -
-                          (t2.hour * 60 + t2.minute);
-                    });
 
                         return ListView.builder(
                           itemCount: todayMedicines.length,
@@ -473,20 +524,6 @@ class _TodayMedicineTabState extends State<TodayMedicineTab> {
         );
       },
     );
-  }
-
-  /// 🔹 יום נוכחי
-  String _getCurrentDay(int weekday) {
-    const days = [
-      'Monday',
-      'Tuesday',
-      'Wednesday',
-      'Thursday',
-      'Friday',
-      'Saturday',
-      'Sunday',
-    ];
-    return days[weekday - 1];
   }
 
   /// 🔹 המרת זמן
@@ -674,8 +711,8 @@ class _AdherenceRing extends StatelessWidget {
                 value >= 80
                     ? Colors.green
                     : value >= 50
-                        ? Colors.orange
-                        : Colors.red,
+                    ? Colors.orange
+                    : Colors.red,
               ),
             ),
             Text(
@@ -684,6 +721,34 @@ class _AdherenceRing extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _InfoButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _InfoButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: const Color(0xFF23C3AE),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF23C3AE).withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: const Icon(Icons.info_outline, color: Colors.white, size: 24),
       ),
     );
   }

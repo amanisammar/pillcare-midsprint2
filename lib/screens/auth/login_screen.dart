@@ -102,22 +102,27 @@ class _LoginScreenState extends State<LoginScreen> {
         context.watch<AuthNotifier>().status == AuthStatus.authenticating;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: const Color(0xFFF9F7F4),
       body: Stack(
         children: [
-          const _Blob(color: Color(0xFFBFE6FF), size: 220, top: -60, left: -70),
-          const _Blob(
-            color: Color(0xFFFFD9D6),
-            size: 200,
+          // Fixed background blobs
+          const Positioned(
+            top: -60,
+            left: -70,
+            child: _Blob(color: Color(0xFFBFE6FF), size: 220),
+          ),
+          const Positioned(
             bottom: -40,
             left: 40,
+            child: _Blob(color: Color(0xFFFFD9D6), size: 200),
           ),
-          const _Blob(
-            color: Color(0xFFCCF2EA),
-            size: 240,
+          const Positioned(
             bottom: -70,
             right: -60,
+            child: _Blob(color: Color(0xFFCCF2EA), size: 240),
           ),
+          // Scrollable content
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -308,25 +313,14 @@ class _RoundedInput extends StatelessWidget {
 }
 
 class _Blob extends StatelessWidget {
-  final double? top;
-  final double? left;
-  final double? right;
-  final double? bottom;
   final double size;
   final Color color;
 
-  const _Blob({
-    this.top,
-    this.left,
-    this.right,
-    this.bottom,
-    required this.size,
-    required this.color,
-  });
+  const _Blob({required this.size, required this.color});
 
   @override
   Widget build(BuildContext context) {
-    final blob = Container(
+    return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
@@ -340,14 +334,6 @@ class _Blob extends StatelessWidget {
           ),
         ],
       ),
-    );
-
-    return Positioned(
-      top: top,
-      left: left,
-      right: right,
-      bottom: bottom,
-      child: blob,
     );
   }
 }
